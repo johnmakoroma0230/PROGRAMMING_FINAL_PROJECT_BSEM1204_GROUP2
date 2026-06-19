@@ -1,60 +1,57 @@
 from tkinter import *
 from tkinter import messagebox
+import os
 
 def login():
 
     username = username_entry.get()
     password = password_entry.get()
 
-    if username == "admin" and password == "admin123":
-        messagebox.showinfo("Success", "Login Successful")
+    if username == "lucian" and password == "lucian123":
+
+        messagebox.showinfo(
+            "Success",
+            "Login Successful"
+        )
+
+        root.destroy()
+
+        os.system("py dashboard.py")
 
     else:
-        messagebox.showerror("Error", "Invalid Username or Password")
+
+        messagebox.showerror(
+            "Error",
+            "Invalid Username or Password"
+        )
 
 
 root = Tk()
-root.title("Hilltop Community Record Management System")
-root.geometry("800x500")
-root.configure(bg="#f0f4f7")
 
-title = Label(
+root.title("Hilltop Community Login")
+root.geometry("400x250")
+
+Label(
     root,
-    text="HILLTOP COMMUNITY RECORD MANAGEMENT SYSTEM",
-    font=("Arial", 18, "bold"),
-    bg="#f0f4f7"
-)
-title.pack(pady=20)
+    text="Username"
+).pack(pady=10)
 
-subtitle = Label(
+username_entry = Entry(root,width=30)
+username_entry.pack()
+
+Label(
     root,
-    text="Login to Continue",
-    font=("Arial", 12),
-    bg="#f0f4f7"
-)
-subtitle.pack()
+    text="Password"
+).pack(pady=10)
 
-frame = Frame(root, bg="white", bd=2, relief="solid")
-frame.pack(pady=40)
-
-Label(frame, text="Username", font=("Arial", 12), bg="white").grid(row=0, column=0, padx=20, pady=15)
-
-username_entry = Entry(frame, width=30, font=("Arial", 12))
-username_entry.grid(row=0, column=1, padx=20)
-
-Label(frame, text="Password", font=("Arial", 12), bg="white").grid(row=1, column=0, padx=20, pady=15)
-
-password_entry = Entry(frame, show="*", width=30, font=("Arial", 12))
-password_entry.grid(row=1, column=1, padx=20)
+password_entry = Entry(root,width=30,show="*")
+password_entry.pack()
 
 Button(
     root,
-    text="LOGIN",
-    font=("Arial", 12, "bold"),
-    width=20,
-    bg="green",
-    fg="white",
+    text="Login",
+    width=15,
     command=login
-).pack()
+).pack(pady=20)
 
 root.mainloop()

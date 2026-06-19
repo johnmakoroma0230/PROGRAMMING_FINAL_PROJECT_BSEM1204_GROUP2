@@ -1,416 +1,599 @@
 import sqlite3
-import matplotlib.pyplot as plt
-
-from tkinter import *
-from tkinter import ttk
-from tkinter import messagebox
-
-from reportlab.pdfgen import canvas
 from datetime import datetime
 
+from tkinter import (
+    Tk,
+    Toplevel,
+    Frame,
+    Label,
+    Entry,
+    Button,
+    StringVar,
+    END,
+    messagebox
+)
 
-# ---------------- DATABASE FUNCTIONS ---------------- #
+from tkinter import ttk
 
-def load_records():
+import matplotlib.pyplot as plt
+from reportlab.pdfgen import canvas
 
-    for row in tree.get_children():
-        tree.delete(row)
+from database import setup_database
 
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
+DB_NAME = "hilltop_records.db"
+REPORT_TOP = 800
+REPORT_BOTTOM = 50
 
-    cursor.execute("SELECT * FROM records")
+def connect_db():
+    return sqlite3.connect(DB_NAME)
 
-    rows = cursor.fetchall()
 
+def setup_database():
+    with connect_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                full_name TEXT NOT NULL,
+                gender TEXT NOT NULL,
+                phone TEXT,
+                address TEXT,
+                status TEXT NOT NULL,
+                created_date TEXT NOT NULL
+            )
+            """
+        )
+
+
+def fetch_records(query="SELECT * FROM records", params=()):
+    with connect_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        return cursor.fetchall()
+
+
+def run_query(query, params=()):
+    with connect_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+
+
+def clear_table():
+    for item in tree.get_children():
+        tree.delete(item)
+
+
+def show_records(rows):
+    clear_table()
     for row in rows:
         tree.insert("", END, values=row)
 
-    conn.close()
+
+def load_records():
+    show_records(fetch_records("SELECT * FROM records ORDER BY id DESC"))
+    update_dashboard()
+
+
+def update_dashboard():
+    rows = fetch_records(
+        """
+        SELECT
+            COUNT(*),
+            SUM(CASE WHEN status = 'Active' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN status = 'Inactive' THEN 1 ELSE 0 END),
+            SUM(CASE WHEN status = 'Pending' THEN 1 ELSE 0 END)
+        FROM records
+        """
+    )
+    total, active, inactive, pending = rows[0]
+
+    total_var.set(f"Total Records: {total or 0}")
+    stat_total.config(text=f"Total\n{total or 0}")
+    stat_active.config(text=f"Active\n{active or 0}")
+    stat_inactive.config(text=f"Inactive\n{inactive or 0}")
+    stat_pending.config(text=f"Pending\n{pending or 0}")
 
 
 def search_records():
+    keyword = search_entry.get().strip()
 
-    keyword = search_entry.get()
+    if not keyword:
+        load_records()
+        return
 
-    for row in tree.get_children():
-        tree.delete(row)
-
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT * FROM records
-        WHERE full_name LIKE ?
-        OR status LIKE ?
-        OR CAST(id AS TEXT) LIKE ?
-    """, (f"%{keyword}%", f"%{keyword}%", f"%{keyword}%"))
-
-    rows = cursor.fetchall()
-
-    for row in rows:
-        tree.insert("", END, values=row)
-
-    conn.close()
+    show_records(
+        fetch_records(
+            """
+            SELECT * FROM records
+            WHERE full_name LIKE ?
+               OR status LIKE ?
+               OR gender LIKE ?
+               OR phone LIKE ?
+               OR CAST(id AS TEXT) LIKE ?
+            ORDER BY id ASC
+            """,
+            tuple([f"%{keyword}%"] * 5),
+        )
+    )
 
 
 def filter_gender():
-
     gender = gender_var.get()
 
-    for row in tree.get_children():
-        tree.delete(row)
-
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
-
     if gender == "All":
-        cursor.execute("SELECT * FROM records")
+        load_records()
     else:
-        cursor.execute(
-            "SELECT * FROM records WHERE gender=?",
-            (gender,)
+        show_records(
+            fetch_records(
+                "SELECT * FROM records WHERE gender = ? ORDER BY id ASC",
+                (gender,),
+            )
         )
-
-    rows = cursor.fetchall()
-
-    for row in rows:
-        tree.insert("", END, values=row)
-
-    conn.close()
 
 
 def filter_status():
-
     status = status_var.get()
 
-    for row in tree.get_children():
-        tree.delete(row)
-
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
-
     if status == "All":
-        cursor.execute("SELECT * FROM records")
+        load_records()
     else:
-        cursor.execute(
-            "SELECT * FROM records WHERE status=?",
-            (status,)
+        show_records(
+            fetch_records(
+                "SELECT * FROM records WHERE status = ? ORDER BY id ASC",
+                (status,),
+            )
         )
 
-    rows = cursor.fetchall()
 
-    for row in rows:
-        tree.insert("", END, values=row)
+def selected_record():
+    selected = tree.focus()
 
-    conn.close()
+    if not selected:
+        messagebox.showwarning("No Selection", "Please select a record first.")
+        return None
+
+    return tree.item(selected)["values"]
 
 
-# ---------------- CHARTS ---------------- #
+def get_summary(field):
+    return fetch_records(
+        f"""
+        SELECT {field}, COUNT(*)
+        FROM records
+        GROUP BY {field}
+        ORDER BY COUNT(*) ASC
+        """
+    )
+
 
 def bar_chart():
+    data = get_summary("status")
 
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT status, COUNT(*)
-        FROM records
-        GROUP BY status
-    """)
-
-    data = cursor.fetchall()
-    conn.close()
+    if not data:
+        messagebox.showinfo("No Data", "There are no records to chart.")
+        return
 
     labels = [row[0] for row in data]
     values = [row[1] for row in data]
 
-    plt.bar(labels, values)
-
+    plt.figure(figsize=(7, 5))
+    plt.bar(labels, values, color=["#2e7d32", "#c62828", "#ef6c00"])
     plt.title("Records by Status")
     plt.xlabel("Status")
     plt.ylabel("Number of Records")
-
+    plt.tight_layout()
     plt.show()
 
 
 def pie_chart():
+    data = get_summary("gender")
 
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT gender, COUNT(*)
-        FROM records
-        GROUP BY gender
-    """)
-
-    data = cursor.fetchall()
-    conn.close()
+    if not data:
+        messagebox.showinfo("No Data", "There are no records to chart.")
+        return
 
     labels = [row[0] for row in data]
     values = [row[1] for row in data]
 
-    plt.pie(values, labels=labels, autopct="%1.1f%%")
-
+    plt.figure(figsize=(6, 6))
+    plt.pie(values, labels=labels, autopct="%1.1f%%", startangle=90)
     plt.title("Gender Distribution")
-
+    plt.tight_layout()
     plt.show()
 
 
 def line_graph():
-
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT created_date
+    data = fetch_records(
+        """
+        SELECT created_date, COUNT(*)
         FROM records
-    """)
+        GROUP BY created_date
+        ORDER BY created_date
+        """
+    )
 
-    rows = cursor.fetchall()
+    if not data:
+        messagebox.showinfo("No Data", "There are no records to chart.")
+        return
 
-    conn.close()
+    dates = [row[0] for row in data]
+    totals = []
+    running_total = 0
 
-    dates = [row[0] for row in rows]
+    for row in data:
+        running_total += row[1]
+        totals.append(running_total)
 
-    values = list(range(1, len(dates) + 1))
-
-    plt.plot(values, marker="o")
-
+    plt.figure(figsize=(8, 5))
+    plt.plot(dates, totals, marker="o", color="#1565c0")
     plt.title("Record Registration Trend")
-    plt.xlabel("Record Number")
-    plt.ylabel("Growth")
-
+    plt.xlabel("Date")
+    plt.ylabel("Total Records")
+    plt.xticks(rotation=35, ha="right")
+    plt.tight_layout()
     plt.show()
 
 
-# ---------------- PDF REPORT ---------------- #
+def write_report(filename, title, rows):
+    pdf = canvas.Canvas(filename)
+    pdf.setTitle(title)
 
-def generate_pdf():
+    y = REPORT_TOP
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.drawString(50, y, title)
 
-    pdf = canvas.Canvas("Hilltop_Report.pdf")
+    y -= 20
+    pdf.setFont("Helvetica", 10)
+    pdf.drawString(50, y, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    pdf.setTitle("Hilltop Community Report")
+    y -= 35
+    if not rows:
+        pdf.drawString(50, y, "No records found for this report.")
+    else:
+        for row in rows:
+            pdf.drawString(50, y, format_record(row))
+            y -= 18
 
-    pdf.drawString(
-        50,
-        800,
-        "Hilltop Community Record Report"
-    )
-
-    pdf.drawString(
-        50,
-        780,
-        f"Generated: {datetime.now()}"
-    )
-
-    conn = sqlite3.connect("hilltop_records.db")
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT * FROM records")
-
-    rows = cursor.fetchall()
-
-    y = 740
-
-    for row in rows:
-
-        pdf.drawString(
-            50,
-            y,
-            str(row)
-        )
-
-        y -= 20
-
-        if y < 50:
-            pdf.showPage()
-            y = 800
-
-    conn.close()
+            if y < REPORT_BOTTOM:
+                pdf.showPage()
+                pdf.setFont("Helvetica", 10)
+                y = REPORT_TOP
 
     pdf.save()
 
-    messagebox.showinfo(
-        "Success",
-        "PDF Report Generated Successfully"
+
+def format_record(row):
+    return (
+        f"ID: {row[0]} | Name: {row[1]} | Gender: {row[2]} | "
+        f"Phone: {row[3]} | Status: {row[5]} | Date: {row[6]}"
     )
 
 
-# ---------------- MAIN WINDOW ---------------- #
+def generate_pdf():
+    rows = fetch_records("SELECT * FROM records ORDER BY id ASC")
+    write_report("Hilltop_Report.pdf", "Hilltop Community Record Report", rows)
+    messagebox.showinfo("Success", "PDF report generated successfully.")
+
+
+def date_report(days, filename, title):
+    rows = fetch_records(
+        """
+        SELECT * FROM records
+        WHERE created_date >= date('now', ?)
+        ORDER BY created_date ASC
+        """,
+        (f"-{days} days",),
+    )
+    write_report(filename, title, rows)
+    messagebox.showinfo("Success", f"{title} generated successfully.")
+
+
+def weekly_report():
+    date_report(7, "Weekly_Report.pdf", "Hilltop Weekly Report")
+
+
+def monthly_report():
+    date_report(30, "Monthly_Report.pdf", "Hilltop Monthly Report")
+
+
+def yearly_report():
+    date_report(365, "Yearly_Report.pdf", "Hilltop Yearly Report")
+
+
+def record_form(title, button_text, existing_record=None):
+    form = Toplevel(root)
+    form.title(title)
+    form.geometry("420x430")
+    form.configure(bg="#f4f6f9")
+    form.resizable(False, False)
+
+    entries = {}
+
+    fields = [
+        ("full_name", "Full Name"),
+        ("gender", "Gender"),
+        ("phone", "Phone"),
+        ("address", "Address"),
+        ("status", "Status"),
+        ("created_date", "Date (YYYY-MM-DD)"),
+    ]
+
+    for index, (key, label_text) in enumerate(fields):
+        Label(form, text=label_text, bg="#f4f6f9").grid(
+            row=index, column=0, padx=20, pady=8, sticky="w"
+        )
+
+        if key == "gender":
+            entry = ttk.Combobox(form, values=["Male", "Female", "Other"], width=27, state="readonly")
+        elif key == "status":
+            entry = ttk.Combobox(
+                form,
+                values=["Active", "Inactive", "Pending"],
+                width=27,
+                state="readonly",
+            )
+        else:
+            entry = Entry(form, width=30)
+
+        entry.grid(row=index, column=1, padx=20, pady=8)
+        entries[key] = entry
+
+    if existing_record:
+        values = existing_record[1:]
+        for index, key in enumerate(entries):
+            entries[key].insert(0, values[index])
+    else:
+        entries["gender"].set("Male")
+        entries["status"].set("Active")
+        entries["created_date"].insert(0, datetime.now().strftime("%Y-%m-%d"))
+
+    def save_record():
+        name = entries["full_name"].get().strip()
+        gender = entries["gender"].get().strip()
+        phone = entries["phone"].get().strip()
+        address = entries["address"].get().strip()
+        status = entries["status"].get().strip()
+        created_date = entries["created_date"].get().strip()
+
+        if not name or not gender or not status or not created_date:
+            messagebox.showwarning(
+                "Missing Details",
+                "Full name, gender, status, and date are required.",
+            )
+            return
+
+        try:
+            datetime.strptime(created_date, "%Y-%m-%d")
+        except ValueError:
+            messagebox.showwarning("Invalid Date", "Please use the date format YYYY-MM-DD.")
+            return
+
+        if existing_record:
+            run_query(
+                """
+                UPDATE records
+                SET full_name = ?,
+                    gender = ?,
+                    phone = ?,
+                    address = ?,
+                    status = ?,
+                    created_date = ?
+                WHERE id = ?
+                """,
+                (name, gender, phone, address, status, created_date, existing_record[0]),
+            )
+            messagebox.showinfo("Success", "Record updated successfully.")
+        else:
+            run_query(
+                """
+                INSERT INTO records
+                (full_name, gender, phone, address, status, created_date)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (name, gender, phone, address, status, created_date),
+            )
+            messagebox.showinfo("Success", "Record added successfully.")
+
+        form.destroy()
+        load_records()
+
+    Button(form, text=button_text, width=18, command=save_record).grid(
+        row=len(fields), column=0, columnspan=2, pady=25
+    )
+
+
+def add_record():
+    record_form("Add Record", "Save Record")
+
+
+def update_record():
+    record = selected_record()
+
+    if record:
+        record_form("Update Record", "Save Changes", record)
+
+
+def delete_record():
+    record = selected_record()
+
+    if not record:
+        return
+
+    confirm = messagebox.askyesno(
+        "Confirm Delete",
+        f"Delete the record for {record[1]}?",
+    )
+
+    if not confirm:
+        return
+
+    run_query("DELETE FROM records WHERE id = ?", (record[0],))
+    load_records()
+    messagebox.showinfo("Success", "Record deleted successfully.")
+
+
+setup_database()
 
 root = Tk()
-
 root.title("Hilltop Community Record Management System")
-
-root.geometry("1300x700")
-
+root.geometry("1300x720")
 root.configure(bg="#f4f6f9")
-
-
-# ---------------- TITLE ---------------- #
-
-title = Label(
-    root,
-    text="HILLTOP COMMUNITY RECORD MANAGEMENT SYSTEM",
-    font=("Arial", 18, "bold"),
-    bg="#f4f6f9"
-)
-
-title.pack(pady=10)
-
-
-# ---------------- TOTAL RECORDS ---------------- #
-
-conn = sqlite3.connect("hilltop_records.db")
-cursor = conn.cursor()
-
-cursor.execute("SELECT COUNT(*) FROM records")
-
-total_records = cursor.fetchone()[0]
-
-conn.close()
 
 Label(
     root,
-    text=f"Total Records: {total_records}",
+    text="HILLTOP COMMUNITY RECORD MANAGEMENT SYSTEM",
+    font=("Arial", 18, "bold"),
+    bg="#f4f6f9",
+).pack(pady=10)
+
+total_var = StringVar(value="Total Records: 0")
+Label(
+    root,
+    textvariable=total_var,
     font=("Arial", 12, "bold"),
-    bg="green",
+    bg="#2e7d32",
     fg="white",
     padx=20,
-    pady=10
+    pady=10,
 ).pack()
 
+stats_frame = Frame(root, bg="#f4f6f9")
+stats_frame.pack(pady=10)
 
-# ---------------- SEARCH FRAME ---------------- #
+stat_total = Label(
+    stats_frame,
+    text="Total\n0",
+    bg="#1565c0",
+    fg="white",
+    font=("Arial", 12, "bold"),
+    width=15,
+    height=3,
+)
+stat_total.grid(row=0, column=0, padx=10)
 
-search_frame = Frame(root)
+stat_active = Label(
+    stats_frame,
+    text="Active\n0",
+    bg="#2e7d32",
+    fg="white",
+    font=("Arial", 12, "bold"),
+    width=15,
+    height=3,
+)
+stat_active.grid(row=0, column=1, padx=10)
 
+stat_inactive = Label(
+    stats_frame,
+    text="Inactive\n0",
+    bg="#c62828",
+    fg="white",
+    font=("Arial", 12, "bold"),
+    width=15,
+    height=3,
+)
+stat_inactive.grid(row=0, column=2, padx=10)
+
+stat_pending = Label(
+    stats_frame,
+    text="Pending\n0",
+    bg="#ef6c00",
+    fg="white",
+    font=("Arial", 12, "bold"),
+    width=15,
+    height=3,
+)
+stat_pending.grid(row=0, column=3, padx=10)
+
+search_frame = Frame(root, bg="#f4f6f9")
 search_frame.pack(pady=10)
 
-Label(search_frame, text="Search").grid(row=0, column=0)
+Label(search_frame, text="Search", bg="#f4f6f9").grid(row=0, column=0)
 
 search_entry = Entry(search_frame, width=30)
+search_entry.grid(row=0, column=1, padx=8)
 
-search_entry.grid(row=0, column=1, padx=10)
+Button(search_frame, text="Search", command=search_records).grid(row=0, column=2, padx=4)
+Button(search_frame, text="Show All", command=load_records).grid(row=0, column=3, padx=4)
 
-Button(
-    search_frame,
-    text="Search",
-    command=search_records
-).grid(row=0, column=2)
-
-
-# ---------------- GENDER FILTER ---------------- #
-
-gender_var = StringVar()
-
-gender_var.set("All")
-
+gender_var = StringVar(value="All")
 gender_combo = ttk.Combobox(
     search_frame,
     textvariable=gender_var,
-    values=["All", "Male", "Female"]
+    values=["All", "Male", "Female", "Other"],
+    width=12,
+    state="readonly",
 )
+gender_combo.grid(row=0, column=4, padx=8)
+Button(search_frame, text="Filter Gender", command=filter_gender).grid(row=0, column=5)
 
-gender_combo.grid(row=0, column=3, padx=10)
-
-Button(
-    search_frame,
-    text="Gender Filter",
-    command=filter_gender
-).grid(row=0, column=4)
-
-
-# ---------------- STATUS FILTER ---------------- #
-
-status_var = StringVar()
-
-status_var.set("All")
-
+status_var = StringVar(value="All")
 status_combo = ttk.Combobox(
     search_frame,
     textvariable=status_var,
-    values=["All", "Active", "Inactive", "Pending"]
+    values=["All", "Active", "Inactive", "Pending"],
+    width=12,
+    state="readonly",
 )
-
-status_combo.grid(row=0, column=5, padx=10)
-
-Button(
-    search_frame,
-    text="Status Filter",
-    command=filter_status
-).grid(row=0, column=6)
-
-
-# ---------------- TABLE ---------------- #
+status_combo.grid(row=0, column=6, padx=8)
+Button(search_frame, text="Filter Status", command=filter_status).grid(row=0, column=7)
 
 table_frame = Frame(root)
+table_frame.pack(pady=15)
 
-table_frame.pack(pady=20)
+columns = ("ID", "Name", "Gender", "Phone", "Address", "Status", "Date")
 
-columns = (
-    "ID",
-    "Name",
-    "Gender",
-    "Phone",
-    "Address",
-    "Status",
-    "Date"
-)
+tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=17)
 
-tree = ttk.Treeview(
-    table_frame,
-    columns=columns,
-    show="headings",
-    height=18
-)
+column_widths = {
+    "ID": 60,
+    "Name": 190,
+    "Gender": 100,
+    "Phone": 140,
+    "Address": 260,
+    "Status": 120,
+    "Date": 130,
+}
 
 for col in columns:
     tree.heading(col, text=col)
-    tree.column(col, width=160)
+    tree.column(col, width=column_widths[col], anchor="center")
 
-tree.pack()
+tree.pack(side="left")
 
+scrollbar = ttk.Scrollbar(table_frame, orient="vertical", command=tree.yview)
+scrollbar.pack(side="right", fill="y")
+tree.configure(yscrollcommand=scrollbar.set)
 
-# ---------------- BUTTONS ---------------- #
-
-button_frame = Frame(root)
-
+button_frame = Frame(root, bg="#f4f6f9")
 button_frame.pack(pady=10)
 
-Button(
-    button_frame,
-    text="Bar Chart",
-    width=15,
-    command=bar_chart
-).grid(row=0, column=0, padx=10)
+buttons = [
+    ("Add Record", add_record),
+    ("Update Record", update_record),
+    ("Delete Record", delete_record),
+    ("Bar Chart", bar_chart),
+    ("Pie Chart", pie_chart),
+    ("Line Graph", line_graph),
+    ("Generate PDF", generate_pdf),
+]
 
-Button(
-    button_frame,
-    text="Pie Chart",
-    width=15,
-    command=pie_chart
-).grid(row=0, column=1, padx=10)
+for index, (text, command) in enumerate(buttons):
+    Button(button_frame, text=text, width=15, command=command).grid(
+        row=0, column=index, padx=6, pady=5
+    )
 
-Button(
-    button_frame,
-    text="Line Graph",
-    width=15,
-    command=line_graph
-).grid(row=0, column=2, padx=10)
+report_buttons = [
+    ("Weekly Report", weekly_report),
+    ("Monthly Report", monthly_report),
+    ("Yearly Report", yearly_report),
+]
 
-Button(
-    button_frame,
-    text="Generate PDF",
-    width=15,
-    command=generate_pdf
-).grid(row=0, column=3, padx=10)
-
-
-# ---------------- LOAD DATA ---------------- #
+for index, (text, command) in enumerate(report_buttons):
+    Button(button_frame, text=text, width=15, command=command).grid(
+        row=1, column=index, padx=6, pady=5
+    )
 
 load_records()
-
 root.mainloop()
